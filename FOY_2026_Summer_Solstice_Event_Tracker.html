@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FOY Summer Solstice Event Tracker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; background: #f5f5f4; color: #1c1c1a; min-height: 100vh; }
+
+  .header { background: #fff; border-bottom: 1px solid #e5e5e3; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 100; }
+  .avatar { width: 38px; height: 38px; border-radius: 50%; background: #166534; color: #fff; font-weight: 600; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .header-title { font-size: 17px; font-weight: 600; color: #1c1c1a; }
+  .header-sub { font-size: 11px; color: #888; margin-top: 1px; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .sync-status { font-size: 11px; color: #888; display: flex; align-items: center; gap: 5px; }
+  .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
+  .sync-dot.syncing { background: #f59e0b; animation: pulse 1s infinite; }
+  .sync-dot.error { background: #ef4444; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .main { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
+
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px; }
+  .stat-card { background: #fff; border: 1px solid #e5e5e3; border-radius: 10px; padding: 14px 16px; text-align: center; }
+  .stat-val { font-size: 26px; font-weight: 600; }
+  .stat-label { font-size: 11px; color: #888; margin-top: 2px; }
+  .c-gray { color: #1c1c1a; }
+  .c-green { color: #166534; }
+  .c-blue { color: #1d4ed8; }
+  .c-purple { color: #6d28d9; }
+  .c-amber { color: #92400e; }
+
+  .progress-wrap { margin-bottom: 16px; }
+  .progress-bar { height: 6px; background: #e5e5e3; border-radius: 99px; overflow: hidden; margin-bottom: 5px; }
+  .progress-fill { height: 100%; background: #22c55e; border-radius: 99px; transition: width 0.4s; }
+  .progress-label { font-size: 11px; color: #888; }
+
+  .filters { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-label { font-size: 11px; color: #888; font-weight: 500; white-space: nowrap; }
+  .pill-group { display: flex; flex-wrap: wrap; gap: 5px; }
+  .pill { padding: 4px 10px; border-radius: 99px; border: 1px solid #e5e5e3; background: #fff; color: #555; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+  .pill:hover { border-color: #aaa; }
+  .pill.active { background: #1c1c1a; color: #fff; border-color: #1c1c1a; }
+
+  .tabs { display: flex; border-bottom: 1px solid #e5e5e3; margin-bottom: 14px; overflow-x: auto; gap: 0; }
+  .tab { padding: 8px 12px; font-size: 11px; font-weight: 500; color: #888; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; margin-bottom: -1px; transition: all 0.15s; }
+  .tab:hover { color: #1c1c1a; }
+  .tab.active { color: #1c1c1a; border-bottom-color: #1c1c1a; }
+
+  .table-wrap { background: #fff; border: 1px solid #e5e5e3; border-radius: 12px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  col.c-task { width: 32%; }
+  col.c-assign { width: 18%; }
+  col.c-due { width: 8%; }
+  col.c-status { width: 10%; }
+  col.c-priority { width: 8%; }
+  col.c-notes { width: 24%; }
+  thead tr { background: #fafaf9; border-bottom: 1px solid #e5e5e3; }
+  th { padding: 9px 12px; text-align: left; font-size: 11px; font-weight: 500; color: #888; }
+  td { padding: 8px 12px; vertical-align: top; }
+  tr.row { border-bottom: 1px solid #f0f0ee; transition: background 0.1s; }
+  tr.row:last-child { border-bottom: none; }
+  tr.row:hover { background: #f8f8f7; }
+  tr.row.alt { background: #fafaf9; }
+  tr.row.alt:hover { background: #f5f5f4; }
+  .task-text { color: #1c1c1a; line-height: 1.4; font-size: 12px; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+  .badge.todo { background: #f3f4f6; color: #4b5563; }
+  .badge.inprogress { background: #fef3c7; color: #92400e; }
+  .badge.done { background: #dcfce7; color: #166534; }
+  .badge.blocked { background: #fee2e2; color: #991b1b; }
+  .badge.high { background: #fee2e2; color: #991b1b; }
+  .badge.med { background: #fef9c3; color: #854d0e; }
+  .badge.low { background: #dbeafe; color: #1e40af; }
+  .badge.human { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+  .badge.ai { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+  .badge.mixed { background: #ede9fe; color: #5b21b6; border: 1px solid #ddd6fe; }
+
+  .editable { cursor: text; border-radius: 4px; padding: 1px 3px; margin: -1px -3px; transition: background 0.1s; }
+  .editable:hover { background: #fef9c3; }
+  .edit-input { width: 100%; border: 1px solid #3b82f6; border-radius: 5px; padding: 3px 6px; font-size: 12px; font-family: inherit; background: #fff; outline: none; box-shadow: 0 0 0 2px #bfdbfe; }
+  .note-empty { color: #ccc; font-style: italic; font-size: 11px; }
+
+  .table-footer { padding: 10px 14px; border-top: 1px solid #f0f0ee; background: #fafaf9; display: flex; align-items: center; justify-content: space-between; }
+  .add-btn { font-size: 12px; color: #555; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 4px; background: none; border: none; padding: 0; transition: color 0.15s; }
+  .add-btn:hover { color: #1c1c1a; }
+  .legend { display: flex; gap: 12px; font-size: 11px; color: #aaa; align-items: center; flex-wrap: wrap; }
+  .legend-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 3px; }
+
+  .add-form { border-top: 1px solid #e5e5e3; background: #f0f7ff; padding: 14px; }
+  .form-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+  .form-grid2 { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 8px; align-items: center; }
+  .form-input { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-family: inherit; background: #fff; outline: none; width: 100%; }
+  .form-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px #bfdbfe; }
+  .btn-add { background: #1c1c1a; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+  .btn-add:hover { background: #333; }
+  .btn-cancel { background: none; border: none; color: #888; font-size: 12px; cursor: pointer; padding: 6px 8px; }
+  .btn-cancel:hover { color: #1c1c1a; }
+  .delete-btn { opacity: 0; color: #ccc; font-size: 16px; cursor: pointer; padding: 0 4px; background: none; border: none; line-height: 1; transition: all 0.15s; flex-shrink: 0; }
+  tr.row:hover .delete-btn { opacity: 1; }
+  .delete-btn:hover { color: #ef4444; }
+
+  .setup-banner { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 10px; padding: 14px 18px; margin-bottom: 18px; font-size: 12px; color: #78350f; line-height: 1.6; }
+  .setup-banner strong { font-weight: 600; }
+  .setup-banner a { color: #92400e; }
+
+  .loading { text-align: center; padding: 40px; color: #888; font-size: 13px; }
+  .error-msg { color: #ef4444; font-size: 12px; padding: 8px 14px; }
+
+  @media (max-width: 900px) {
+    .stats { grid-template-columns: repeat(3, 1fr); }
+    .form-grid { grid-template-columns: 1fr 1fr; }
+    .form-grid2 { grid-template-columns: 1fr 1fr auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="avatar">EV</div>
+  <div>
+    <div class="header-title">FOY 2026 Summer Solstice Event — Event Plan</div>
+    <div class="header-sub">Managed by Eva · FOY Med Spa · Saturday, June 20, 2026 · On-site</div>
+  </div>
+  <div class="header-right">
+    <div class="sync-status">
+      <div class="sync-dot" id="syncDot"></div>
+      <span id="syncLabel">Connected</span>
+    </div>
+    <button onclick="loadFromSheet()" style="font-size:11px;border:1px solid #e5e5e3;background:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;color:#555;">↻ Refresh</button>
+  </div>
+</div>
+
+<div class="main">
+
+  <div class="setup-banner" id="setupBanner" style="display:none;">
+    <strong>Setup required:</strong> To connect to Google Sheets, you need to authorize this app.<br>
+    1. Open your Google Sheet and go to <strong>Extensions → Apps Script</strong><br>
+    2. Paste the provided Apps Script code and deploy as a Web App<br>
+    3. Copy the Web App URL and enter it below:<br><br>
+    <input id="webAppUrl" placeholder="Paste your Apps Script Web App URL here" style="width:420px;border:1px solid #fcd34d;border-radius:6px;padding:6px 10px;font-size:12px;background:#fff;margin-right:8px;">
+    <button onclick="saveWebAppUrl()" style="background:#92400e;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;">Save & Connect</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card"><div class="stat-val c-gray" id="statTotal">—</div><div class="stat-label">Total tasks</div></div>
+    <div class="stat-card"><div class="stat-val c-green" id="statDone">—</div><div class="stat-label">Completed</div></div>
+    <div class="stat-card"><div class="stat-val c-blue" id="statHuman">—</div><div class="stat-label">Human tasks</div></div>
+    <div class="stat-card"><div class="stat-val c-green" id="statAi">—</div><div class="stat-label">AI tasks</div></div>
+    <div class="stat-card"><div class="stat-val c-purple" id="statMixed">—</div><div class="stat-label">Mixed tasks</div></div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    <div class="progress-label" id="progressLabel">Loading...</div>
+  </div>
+
+  <div class="filters">
+    <span class="filter-label">Filter by owner:</span>
+    <div class="pill-group" id="ownerPills"></div>
+  </div>
+
+  <div class="tabs" id="sectionTabs"></div>
+
+  <div class="table-wrap">
+    <div id="tableArea"><div class="loading">Loading tasks from Google Sheets...</div></div>
+  </div>
+
+</div>
+
+<script>
+const SHEET_ID = "1_vfXKM_ge_0pSKVoqENoF7E32YdrqbyzQv96aagdZJM";
+const SECTIONS = ["All","Planning","Marketing","Food & Drinks","Supplies","Gift Bags","Décor & Signage","Photography","Staff Briefing","Vendors & Logistics","Event Day","Post-Event"];
+const STATUS_CYCLE = ["To Do","In Progress","Done","Blocked"];
+const STATUS_CLASS = {"To Do":"todo","In Progress":"inprogress","Done":"done","Blocked":"blocked"};
+const PRIORITY_CLASS = {high:"high",med:"med",low:"low"};
+const TYPE_CLASS = {human:"human",ai:"ai",mixed:"mixed"};
+
+let tasks = [];
+let activeSection = "All";
+let ownerFilter = "All";
+let showAddForm = false;
+let editingNoteId = null;
+let editingAssigneeId = null;
+let editingTaskId = null;
+let editingDueId = null;
+let webAppUrl = localStorage.getItem("foy_webapp_url") || "https://script.google.com/macros/s/AKfycbwemqtzkCPV6cwQ-cGY1n-b1LexHNsl6RA-JGwyH5VJpcfzdhmMks-JmbdQkUqab5LUOw/exec";
+let nextId = 104;
+
+const FALLBACK_DATA = [
+  [1,"Planning","Confirm event concept, theme, and goals","Mike","human","Apr 18","To Do","high","Mimosa bar + luxury spa vibe — keep or evolve?"],
+  [2,"Planning","Finalize guest count and RSVP strategy","Mike","human","Apr 18","To Do","high","Target: 50–100. VIP clients invited personally"],
+  [3,"Planning","Set and approve event budget","Mike","human","Apr 25","To Do","high","Required before any vendor/supply purchases"],
+  [4,"Planning","Confirm team roles and assignments","Mike","human","Apr 25","To Do","high","Ashley, Cristina, Madison, Dr. Gena, Jasmine, Kennedi, Nicole, Nekea, Julee"],
+  [5,"Planning","Post staff assignments to break room board","Mike","human","Apr 25","To Do","med",""],
+  [6,"Planning","Confirm FOY uniforms for all staff","Mike","human","Apr 25","To Do","med",""],
+  [7,"Planning","Identify and personally invite VIP guests","Mike","human","May 2","To Do","med","2–3 top clients invited personally"],
+  [8,"Planning","Confirm A/C is working before event","Mike","human","Jun 13","To Do","high","Verify HVAC ahead of time"],
+  [9,"Marketing","Design event graphics and social media assets","Stella (AI)","ai","May 2","To Do","high","Open Stella project. Black + gold palette"],
+  [10,"Marketing","Develop hashtag strategy","Stella (AI)","ai","May 2","To Do","med","Open Stella project"],
+  [11,"Marketing","Create and post event announcement on socials","Julee / Stella (AI)","mixed","May 9","To Do","high","Location video + announcement"],
+  [12,"Marketing","Hand out event flyers in the building","Mike","human","May 16","To Do","med","Round 1 + Round 2"],
+  [13,"Marketing","Post to Chamber of Commerce page","Mike","human","May 16","To Do","med",""],
+  [14,"Marketing","Send Chamber location video","Mike","human","May 16","To Do","med",""],
+  [15,"Marketing","Draft email invitation copy","Roman (AI)","ai","May 9","To Do","high","Open Roman project"],
+  [16,"Marketing","Build event landing page / blog post","Roman (AI)","ai","May 9","To Do","med","Open Roman project"],
+  [17,"Marketing","Launch paid ad campaign","Max (AI)","ai","May 16","To Do","high","Open Max project"],
+  [18,"Marketing","Send RSVP invitations to full client list","Zoe (AI)","ai","May 16","To Do","high","Open Zoe project"],
+  [19,"Marketing","Send 2-week reminder to RSVPs","Zoe (AI)","ai","Jun 6","To Do","med",""],
+  [20,"Marketing","Send 3-day final reminder","Zoe (AI)","ai","Jun 17","To Do","high",""],
+  [21,"Marketing","Film revised FOY location video","Julee","human","May 9","To Do","med","Send to Chamber"],
+  [22,"Food & Drinks","Confirm catering vendor and menu","Mike / Dr. Gena","human","May 9","To Do","high","2025 vendor: Shatina's Sister — confirm or find new"],
+  [23,"Food & Drinks","Confirm food menu items (TBD — new for 2026)","Mike / Dr. Gena","human","May 9","To Do","high","Replace 2025 menu once confirmed"],
+  [24,"Food & Drinks","Order FOY Signature Cookies (5 dozen)","Dr. Gena","human","Jun 6","To Do","high","Order 6+ wks out. Baker does waxing trade"],
+  [25,"Food & Drinks","Purchase mimosa bar supplies","Mike","human","Jun 13","To Do","high","OJ, peach juice/syrup, lavender syrup, champagne"],
+  [26,"Food & Drinks","Prepare coffee (make onsite, day-of)","Mike","human","Jun 20","To Do","med",""],
+  [27,"Food & Drinks","Purchase mini-waters and apple juice","Mike","human","Jun 13","To Do","med",""],
+  [28,"Food & Drinks","Pickup ice — 3 bags from gas station","Mike","human","Jun 20","To Do","med","Day-of pickup from neighboring station"],
+  [29,"Food & Drinks","Pickup fruit platter (pre-ordered)","Mike / Dr. Gena","human","Jun 20","To Do","med","Morning of event"],
+  [30,"Supplies","Verify serving chafers on-site at FOY","Mike","human","Jun 6","To Do","med","2025: On-site. Verify still available"],
+  [31,"Supplies","Source/confirm coffee pot and drink dispensers","Mike","human","Jun 6","To Do","med","For mimosa bar station"],
+  [32,"Supplies","Verify champagne flutes on-site at FOY","Mike","human","Jun 6","To Do","med","2025: On-site. Confirm count sufficient"],
+  [33,"Supplies","Source/confirm table linens (2 long, 1 short)","Mike","human","Jun 13","To Do","med",""],
+  [34,"Supplies","Purchase plates, utensils, cups, napkins","Mike","human","Jun 13","To Do","med",""],
+  [35,"Supplies","Purchase food warmers, tongs, serving utensils","Mike","human","Jun 13","To Do","med",""],
+  [36,"Supplies","Order FOY branded bags","Mike","human","May 16","To Do","med","Uline + All Pro Color / PrintHeadz logo"],
+  [37,"Supplies","Confirm AV setup — mic, speakers, big TV","Mike","human","Jun 13","To Do","high","For welcome remarks + spin-the-wheel"],
+  [38,"Gift Bags","Order product samples (Circadia, SkinBetter, CeraVe, La Roche)","Mike","human","Jun 6","To Do","high","~1 wk lead time each"],
+  [39,"Gift Bags","Prepare gift bag materials: memory stick, business cards, flyers","Mike","human","Jun 13","To Do","med","Spravato, FOY, Stretch Therapy flyers"],
+  [40,"Gift Bags","Print flyers at All Pro Color","Mike","human","Jun 6","To Do","med","Spravato, FOY, Stretch Therapy"],
+  [41,"Gift Bags","Assemble all gift bags (Tuesday setup day)","All Staff","human","Jun 19","To Do","high",""],
+  [42,"Gift Bags","Confirm raffle prize #1: FOY Complimentary Facial","Mike","human","Jun 13","To Do","med",""],
+  [43,"Gift Bags","Confirm raffle prize #2: 45-min massage gun session","Mike","human","Jun 13","To Do","med",""],
+  [44,"Gift Bags","Confirm raffle prize #3: Skinceutical / product bundle","Mike","human","Jun 13","To Do","med",""],
+  [45,"Gift Bags","Set up digital spin-the-wheel giveaway (big TV)","Mike","human","Jun 13","To Do","high","Captures contacts for follow-up"],
+  [46,"Décor & Signage","Purchase balloons — 10 black, 10 gold","Mike","human","Jun 17","To Do","med","Black + gold palette"],
+  [47,"Décor & Signage","Source floral arrangement","Mike","human","Jun 13","To Do","med","Summer solstice theme"],
+  [48,"Décor & Signage","Commission chalk boards for entrance signage","Mike","human","May 16","To Do","med","Find hand-lettering contact (2025: Kae's aunt)"],
+  [49,"Décor & Signage","Confirm FOY branded signage / banners","Mike","human","Jun 13","To Do","med","FOY branding required at entrance"],
+  [50,"Décor & Signage","Plan table layout and contents","Mike","human","Jun 13","To Do","med","Discuss with staff"],
+  [51,"Photography","Confirm Julee available for event day","Mike / Julee","human","May 2","To Do","high",""],
+  [52,"Photography","Brief Julee on shot list and content goals","Mike / Julee","human","Jun 13","To Do","med","All content requires Mike's approval before posting"],
+  [53,"Photography","Capture event photos and video (day-of)","Julee","human","Jun 20","To Do","high","Full day coverage"],
+  [54,"Photography","Post event recap content (social + blog)","Julee / Stella (AI)","mixed","Jun 23","To Do","med","Mike's approval required before posting"],
+  [55,"Staff Briefing","Develop staff briefing document","Aria (AI)","ai","Jun 6","To Do","high","All 9 staff members"],
+  [56,"Staff Briefing","Create event-day role assignments per staff member","Aria (AI)","ai","Jun 6","To Do","high","Estheticians → stations; NPs/RN → medical; Julee → content"],
+  [57,"Staff Briefing","Confirm all staff attendance and schedule","Mike","human","Jun 13","To Do","high","Physical confirmation from each member"],
+  [58,"Vendors & Logistics","Confirm all vendor delivery and setup times","Mike","human","Jun 13","To Do","high",""],
+  [59,"Vendors & Logistics","Plan setup — Tuesday June 19 afternoon","Mike + Staff","human","Jun 19","To Do","high","2025: Setup done Tuesday afternoon"],
+  [60,"Vendors & Logistics","Set up registration/check-in table at entrance","Mike","human","Jun 19","To Do","high","Nicole / Kennedi at front door"],
+  [61,"Vendors & Logistics","Confirm booking process for day-of","Mike","human","Jun 13","To Do","med","2025: Refer to Vagaro / website"],
+  [62,"Event Day","Final venue and décor setup","Mike + All Staff","human","Jun 20","To Do","high",""],
+  [63,"Event Day","Guest check-in at registration table","Kennedi / Nicole","human","Jun 20","To Do","high","Front door check-in"],
+  [64,"Event Day","Mimosa bar and food service management","Mike / Ashley","human","Jun 20","To Do","high","Keep stations stocked throughout"],
+  [65,"Event Day","FOY esthetics service / demo stations","Ashley, Cristina, Madison","human","Jun 20","To Do","high",""],
+  [66,"Event Day","Medical service stations / consultations","Jasmine, Nekea, Dr. Gena","human","Jun 20","To Do","high",""],
+  [67,"Event Day","Raffle / spin-the-wheel facilitation","Mike","human","Jun 20","To Do","high","Ensure contact capture"],
+  [68,"Event Day","Photography and video coverage","Julee","human","Jun 20","To Do","high","Full day"],
+  [69,"Event Day","Distribute gift bags to departing guests","All Staff","human","Jun 20","To Do","med",""],
+  [70,"Event Day","Post-event venue breakdown","Mike + All Staff","human","Jun 20","To Do","high",""],
+  [71,"Post-Event","Send post-event thank-you communications","Zoe (AI)","ai","Jun 23","To Do","med","Open Zoe project"],
+  [72,"Post-Event","Follow up on day-of booking inquiries","Mike / Zoe (AI)","mixed","Jun 23","To Do","high","Contacts from spin-the-wheel"],
+  [73,"Post-Event","Post event recap content (social + blog)","Julee / Stella (AI)","mixed","Jun 27","To Do","med","Owner approval required"],
+  [74,"Post-Event","Gather and review guest feedback","Mike","human","Jun 27","To Do","med",""],
+  [75,"Post-Event","Internal debrief and lessons learned","Mike + Dr. Gena","human","Jun 27","To Do","med",""],
+  [76,"Gift Bags","Contact suppliers for product donations","Mike","human","May 16","To Do","med","Reach out for product donations for gift bags and raffle prizes"],
+];
+
+function setSyncStatus(state, label) {
+  const dot = document.getElementById("syncDot");
+  const lbl = document.getElementById("syncLabel");
+  dot.className = "sync-dot" + (state === "syncing" ? " syncing" : state === "error" ? " error" : "");
+  lbl.textContent = label;
+}
+
+function formatDue(val) {
+  if (!val) return "";
+  const s = String(val);
+  if (s.includes("T")) {
+    const d = new Date(s);
+    return d.toLocaleDateString("en-US", {month:"short", day:"numeric", timeZone:"UTC"});
+  }
+  return s;
+}
+
+async function loadFromSheet() {
+  setSyncStatus("syncing", "Loading...");
+  try {
+    const res = await fetch(webAppUrl);
+    const json = await res.json();
+    if (!json.data || json.data.length === 0) throw new Error("Empty sheet");
+    tasks = json.data.map((r, i) => ({
+      id: Number(r.id) || i+1,
+      section: r.section || "",
+      task: r.task || "",
+      assignee: r.assignee || "",
+      type: r.type || "human",
+      due: formatDue(r.due),
+      status: r.status || "To Do",
+      priority: r.priority || "med",
+      notes: r.notes || ""
+    }));
+    nextId = Math.max(...tasks.map(t => t.id)) + 1;
+    setSyncStatus("ok", "Synced");
+    render();
+  } catch(e) {
+    setSyncStatus("error", "Sheet not connected — using local data");
+    loadFallback();
+  }
+}
+
+function loadFallback() {
+  tasks = FALLBACK_DATA.map(([id,section,task,assignee,type,due,status,priority,notes]) =>
+    ({id,section,task,assignee,type,due,status,priority,notes}));
+  nextId = 104;
+  setSyncStatus("error", "Using local data — sheet not connected");
+  render();
+}
+
+async function saveToSheet(action, payload) {
+  if (!webAppUrl) { setSyncStatus("error", "No Apps Script URL — changes saved locally only"); return; }
+  setSyncStatus("syncing", "Saving...");
+  try {
+    await fetch(webAppUrl, {
+      method: "POST",
+      body: JSON.stringify({action, ...payload}),
+      headers: {"Content-Type":"application/json"}
+    });
+    setSyncStatus("ok", "Saved");
+  } catch(e) {
+    setSyncStatus("error", "Save failed — check Apps Script URL");
+  }
+}
+
+function saveWebAppUrl() {
+  const val = document.getElementById("webAppUrl").value.trim();
+  if (!val) return;
+  webAppUrl = val;
+  localStorage.setItem("foy_webapp_url", val);
+  document.getElementById("setupBanner").style.display = "none";
+  loadFromSheet();
+}
+
+function getFiltered() {
+  let list = activeSection === "All" ? tasks : tasks.filter(t => t.section === activeSection);
+  if (ownerFilter !== "All") list = list.filter(t => t.assignee.includes(ownerFilter));
+  return list;
+}
+
+function getOwners() {
+  const names = new Set();
+  tasks.forEach(t => t.assignee.split(/[,/+]/).forEach(n => { const s = n.trim(); if(s) names.add(s); }));
+  return ["All", ...Array.from(names).sort()];
+}
+
+function getStats() {
+  return {
+    total: tasks.length,
+    done: tasks.filter(t => t.status === "Done").length,
+    human: tasks.filter(t => t.type === "human").length,
+    ai: tasks.filter(t => t.type === "ai").length,
+    mixed: tasks.filter(t => t.type === "mixed").length,
+  };
+}
+
+function cycleStatus(id) {
+  const t = tasks.find(t => t.id === id);
+  if (!t) return;
+  const i = STATUS_CYCLE.indexOf(t.status);
+  t.status = STATUS_CYCLE[(i+1) % STATUS_CYCLE.length];
+  saveToSheet("update", {id, field:"status", value:t.status});
+  render();
+}
+
+function saveNote(id) {
+  const inp = document.getElementById("noteInput_" + id);
+  if (!inp) return;
+  const t = tasks.find(t => t.id === id);
+  if (t) { t.notes = inp.value; saveToSheet("update", {id, field:"notes", value:t.notes}); }
+  editingNoteId = null;
+  render();
+}
+
+function saveAssignee(id) {
+  const aInp = document.getElementById("assigneeInput_" + id);
+  const tInp = document.getElementById("typeInput_" + id);
+  if (!aInp) return;
+  const t = tasks.find(t => t.id === id);
+  if (t) {
+    t.assignee = aInp.value;
+    t.type = tInp ? tInp.value : t.type;
+    saveToSheet("update", {id, field:"assignee", value:t.assignee});
+    saveToSheet("update", {id, field:"type", value:t.type});
+  }
+  editingAssigneeId = null;
+  render();
+}
+
+function saveTask(id) {
+  const inp = document.getElementById("taskInput_" + id);
+  if (!inp) return;
+  const t = tasks.find(t => t.id === id);
+  if (t && inp.value.trim()) { t.task = inp.value.trim(); saveToSheet("update", {id, field:"task", value:t.task}); }
+  editingTaskId = null;
+  render();
+}
+
+function saveDue(id) {
+  const inp = document.getElementById("dueInput_" + id);
+  if (!inp) return;
+  const t = tasks.find(t => t.id === id);
+  if (t) { t.due = inp.value.trim(); saveToSheet("update", {id, field:"due", value:t.due}); }
+  editingDueId = null;
+  render();
+}
+
+function deleteTask(id) {
+  tasks = tasks.filter(t => t.id !== id);
+  saveToSheet("delete", {id});
+  render();
+}
+
+function addTask(e) {
+  e.preventDefault();
+  const f = e.target;
+  const t = {
+    id: nextId++,
+    section: f.section.value,
+    task: f.task.value.trim(),
+    assignee: f.assignee.value.trim(),
+    type: f.type.value,
+    due: f.due.value.trim(),
+    status: f.status.value,
+    priority: f.priority.value,
+    notes: f.notes.value.trim()
+  };
+  if (!t.task) return;
+  tasks.push(t);
+  saveToSheet("add", {task: t});
+  showAddForm = false;
+  render();
+}
+
+function render() {
+  const stats = getStats();
+  document.getElementById("statTotal").textContent = stats.total;
+  document.getElementById("statDone").textContent = stats.done;
+  document.getElementById("statHuman").textContent = stats.human;
+  document.getElementById("statAi").textContent = stats.ai;
+  document.getElementById("statMixed").textContent = stats.mixed;
+  const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
+  document.getElementById("progressFill").style.width = pct + "%";
+  document.getElementById("progressLabel").textContent =
+    `${stats.done} of ${stats.total} tasks complete — ${pct}% · ${stats.human} human · ${stats.ai} AI · ${stats.mixed} mixed`;
+
+  const ownerPills = document.getElementById("ownerPills");
+  ownerPills.innerHTML = getOwners().map(o =>
+    `<button class="pill${ownerFilter===o?' active':''}" onclick="ownerFilter='${o.replace(/'/g,"\\'")}';render()">${o}</button>`
+  ).join("");
+
+  const tabs = document.getElementById("sectionTabs");
+  tabs.innerHTML = SECTIONS.map(s =>
+    `<div class="tab${activeSection===s?' active':''}" onclick="activeSection='${s}';render()">${s}</div>`
+  ).join("");
+
+  const filtered = getFiltered();
+  let tableHTML = `<table>
+    <colgroup><col class="c-task"><col class="c-assign"><col class="c-due"><col class="c-status"><col class="c-priority"><col class="c-notes"></colgroup>
+    <thead><tr>
+      <th>Task</th><th>Assigned to</th><th>Due</th><th>Status</th><th>Priority</th><th>Notes</th>
+    </tr></thead><tbody>`;
+
+  filtered.forEach((t, i) => {
+    const isAltRow = i % 2 === 1;
+    tableHTML += `<tr class="row${isAltRow?' alt':''}">
+      <td>
+      ${editingTaskId === t.id
+        ? `<input id="taskInput_${t.id}" class="edit-input" value="${esc(t.task)}"
+            onblur="saveTask(${t.id})"
+            onkeydown="if(event.key==='Enter')saveTask(${t.id});if(event.key==='Escape'){editingTaskId=null;render();}" autofocus>`
+        : `<span class="editable task-text" onclick="editingTaskId=${t.id};render()" title="Click to edit task">${esc(t.task)}</span>`
+      }
+      </td>
+      <td>`;
+    if (editingAssigneeId === t.id) {
+      tableHTML += `<div style="display:flex;flex-direction:column;gap:4px;">
+        <input id="assigneeInput_${t.id}" class="edit-input" value="${esc(t.assignee)}"
+          onkeydown="if(event.key==='Enter')saveAssignee(${t.id});if(event.key==='Escape'){editingAssigneeId=null;render();}" autofocus>
+        <select id="typeInput_${t.id}" class="edit-input" onblur="saveAssignee(${t.id})">
+          <option value="human"${t.type==='human'?' selected':''}>Human</option>
+          <option value="ai"${t.type==='ai'?' selected':''}>AI</option>
+          <option value="mixed"${t.type==='mixed'?' selected':''}>Mixed</option>
+        </select></div>`;
+    } else {
+      tableHTML += `<span class="badge ${TYPE_CLASS[t.type]||'human'}" onclick="editingAssigneeId=${t.id};render()" title="Click to edit">${esc(t.assignee)}</span>`;
+    }
+    tableHTML += `</td>
+      <td>
+      ${editingDueId === t.id
+        ? `<input id="dueInput_${t.id}" class="edit-input" value="${esc(t.due)}"
+            onblur="saveDue(${t.id})"
+            onkeydown="if(event.key==='Enter')saveDue(${t.id});if(event.key==='Escape'){editingDueId=null;render();}" autofocus style="width:80px;">`
+        : `<span class="editable" onclick="editingDueId=${t.id};render()" title="Click to edit due date" style="color:#666;font-size:12px;white-space:nowrap;">${esc(t.due) || '<span class=\"note-empty\">add date</span>'}</span>`
+      }
+      </td>
+      <td><span class="badge ${STATUS_CLASS[t.status]||'todo'}" onclick="cycleStatus(${t.id})" title="Click to cycle status">${esc(t.status)}</span></td>
+      <td><span class="badge ${PRIORITY_CLASS[t.priority]||'med'}">${esc(t.priority)}</span></td>
+      <td><div style="display:flex;align-items:flex-start;gap:6px;">
+        <div style="flex:1;">`;
+    if (editingNoteId === t.id) {
+      tableHTML += `<input id="noteInput_${t.id}" class="edit-input" value="${esc(t.notes)}"
+        onblur="saveNote(${t.id})"
+        onkeydown="if(event.key==='Enter')saveNote(${t.id});if(event.key==='Escape'){editingNoteId=null;render();}" autofocus>`;
+    } else {
+      tableHTML += `<span class="editable" onclick="editingNoteId=${t.id};render()" title="Click to edit note">
+        ${t.notes ? esc(t.notes) : '<span class="note-empty">click to add note</span>'}
+      </span>`;
+    }
+    tableHTML += `</div>
+        <button class="delete-btn" onclick="if(confirm('Delete this task?'))deleteTask(${t.id})" title="Delete">×</button>
+      </div></td>
+    </tr>`;
+  });
+
+  tableHTML += `</tbody></table>`;
+
+  if (showAddForm) {
+    tableHTML += `<form class="add-form" onsubmit="addTask(event)">
+      <p style="font-size:12px;font-weight:600;color:#333;margin-bottom:10px;">New Task</p>
+      <div class="form-grid">
+        <input name="task" class="form-input" placeholder="Task description *" required>
+        <input name="assignee" class="form-input" placeholder="Assigned to">
+        <input name="due" class="form-input" placeholder="Due date (e.g. May 9)">
+        <select name="section" class="form-input">
+          ${SECTIONS.filter(s=>s!=="All").map(s=>`<option value="${s}">${s}</option>`).join("")}
+        </select>
+        <select name="priority" class="form-input">
+          <option value="high">High</option><option value="med" selected>Med</option><option value="low">Low</option>
+        </select>
+        <select name="type" class="form-input">
+          <option value="human">Human</option><option value="ai">AI</option><option value="mixed">Mixed</option>
+        </select>
+      </div>
+      <div class="form-grid2">
+        <input name="notes" class="form-input" placeholder="Notes (optional)" style="grid-column:1/3;">
+        <select name="status" class="form-input">
+          ${STATUS_CYCLE.map(s=>`<option value="${s}">${s}</option>`).join("")}
+        </select>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button type="submit" class="btn-add">Add task</button>
+          <button type="button" class="btn-cancel" onclick="showAddForm=false;render()">Cancel</button>
+        </div>
+      </div>
+    </form>`;
+  }
+
+  tableHTML += `<div class="table-footer">
+    <button class="add-btn" onclick="showAddForm=!showAddForm;render()">
+      <span style="font-size:16px;line-height:1;">+</span> Add task
+    </button>
+    <div class="legend">
+      <span><span class="legend-dot" style="background:#22c55e;"></span>AI employee</span>
+      <span><span class="legend-dot" style="background:#3b82f6;"></span>Human staff</span>
+      <span><span class="legend-dot" style="background:#8b5cf6;"></span>Mixed</span>
+      <span style="color:#ccc;">·</span>
+      <span style="font-style:italic;color:#bbb;">Click status to cycle · Click assignee or note to edit</span>
+    </div>
+  </div>`;
+
+  document.getElementById("tableArea").innerHTML = tableHTML;
+
+  if (editingNoteId !== null) {
+    const inp = document.getElementById("noteInput_" + editingNoteId);
+    if (inp) { inp.focus(); inp.select(); }
+  }
+  if (editingTaskId !== null) {
+    const inp = document.getElementById("taskInput_" + editingTaskId);
+    if (inp) { inp.focus(); inp.select(); }
+  }
+  if (editingDueId !== null) {
+    const inp = document.getElementById("dueInput_" + editingDueId);
+    if (inp) { inp.focus(); inp.select(); }
+  }
+  if (editingAssigneeId !== null) {
+    const inp = document.getElementById("assigneeInput_" + editingAssigneeId);
+    if (inp) { inp.focus(); inp.select(); }
+  }
+}
+
+function esc(str) {
+  return String(str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+loadFromSheet();
+</script>
+</body>
+</html>
