@@ -91,6 +91,7 @@
     // ── Sort helpers ──────────────────────────────────────────────────────────
     const MONTH_NUM = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
     const PRIORITY_ORDER = { high:0, med:1, low:2 };
+    const STATUS_ORDER   = { "blocked":0, "in progress":1, "to do":2, "done":3 };
     function parseDue(s) {
       if (!s) return Infinity;
       const [mon, day] = s.trim().split(" ");
@@ -136,7 +137,7 @@
       const [assigneeDraft,     setAssigneeDraft]     = useState({ assignee:"", type:"human" });
       const [editingTaskId,     setEditingTaskId]     = useState(null);
       const [taskDraft,         setTaskDraft]         = useState("");
-      const [sortField,         setSortField]         = useState(null);   // "due" | "priority" | null
+      const [sortField,         setSortField]         = useState(null);   // "due" | "priority" | "status" | null
       const [sortDir,           setSortDir]           = useState("asc");  // "asc" | "desc"
 
       // ── Load ──
@@ -278,8 +279,12 @@
         if (ownerFilter!=="All") list = list.filter(t => t.assignee.includes(ownerFilter));
         if (sortField) {
           list = [...list].sort((a, b) => {
-            const va = sortField==="due" ? parseDue(a.due) : (PRIORITY_ORDER[a.priority] ?? 99);
-            const vb = sortField==="due" ? parseDue(b.due) : (PRIORITY_ORDER[b.priority] ?? 99);
+            const va = sortField==="due"      ? parseDue(a.due)
+                     : sortField==="priority" ? (PRIORITY_ORDER[a.priority] ?? 99)
+                     : (STATUS_ORDER[(a.status||"").toLowerCase()] ?? 99);
+            const vb = sortField==="due"      ? parseDue(b.due)
+                     : sortField==="priority" ? (PRIORITY_ORDER[b.priority] ?? 99)
+                     : (STATUS_ORDER[(b.status||"").toLowerCase()] ?? 99);
             return sortDir==="asc" ? va - vb : vb - va;
           });
         }
@@ -415,7 +420,12 @@
                             Due {sortField==="due" ? (sortDir==="asc" ? "↑" : "↓") : <span className="text-gray-300">↕</span>}
                           </button>
                         </th>
-                        <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-1/12">Status</th>
+                        <th className="text-left px-4 py-2.5 text-xs w-1/12">
+                          <button onClick={() => toggleSort("status")}
+                            className={`flex items-center gap-1 font-medium hover:text-gray-800 transition-colors ${sortField==="status" ? "text-gray-900" : "text-gray-500"}`}>
+                            Status {sortField==="status" ? (sortDir==="asc" ? "↑" : "↓") : <span className="text-gray-300">↕</span>}
+                          </button>
+                        </th>
                         <th className="text-left px-4 py-2.5 text-xs w-1/12">
                           <button onClick={() => toggleSort("priority")}
                             className={`flex items-center gap-1 font-medium hover:text-gray-800 transition-colors ${sortField==="priority" ? "text-gray-900" : "text-gray-500"}`}>
@@ -591,7 +601,7 @@
                       <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>Human</span>
                       <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-400 inline-block"></span>Mixed</span>
                       <span className="text-gray-300">·</span>
-                      <span className="italic">Click task, assignee, due date, or note to edit · Click status to cycle · Click Due/Priority header to sort · Hover row to delete</span>
+                      <span className="italic">Click task, assignee, due date, or note to edit · Click status to cycle · Click Due/Priority/Status header to sort · Hover row to delete</span>
                     </div>
                   </div>
                 </div>
