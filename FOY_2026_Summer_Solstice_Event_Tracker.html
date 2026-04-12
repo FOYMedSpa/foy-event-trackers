@@ -75,10 +75,10 @@
         section:  r.section         || "",
         task:     r.task            || "",
         assignee: r.assignee        || "",
-        type:     r.type            || "human",
+        type:     (r.type || "human").toLowerCase().trim(),
         due:      formatDue(r.due),
         status:   r.status          || "To Do",
-        priority: r.priority        || "med",
+        priority: (r.priority || "med").toLowerCase().trim(),
         notes:    r.notes           || "",
       };
     }
