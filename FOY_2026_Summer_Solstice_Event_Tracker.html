@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FOY Summer Solstice 2026 — Event Dashboard</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" />
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -85,8 +85,19 @@
 
     // ── Constants ─────────────────────────────────────────────────────────────
     const SECTIONS = ["All","Planning","Marketing","Food & Drinks","Supplies","Gift Bags",
-                      "Décor & Signage","Photography","Staff Briefing","Vendors & Logistics",
-                      "Event Day","Post-Event"];
+                      "Deals & Offers","Décor & Signage","Photography","Staff Briefing",
+                      "Vendors & Logistics","Event Day","Post-Event"];
+
+    // ── Sort helpers ──────────────────────────────────────────────────────────
+    const MONTH_NUM = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+    const PRIORITY_ORDER = { high:0, med:1, low:2 };
+    function parseDue(s) {
+      if (!s) return Infinity;
+      const [mon, day] = s.trim().split(" ");
+      const m = MONTH_NUM[mon];
+      const d = parseInt(day);
+      return (m !== undefined && !isNaN(d)) ? new Date(2026, m, d).getTime() : Infinity;
+    }
     const STATUS_CYCLE = ["To Do","In Progress","Done","Blocked"];
     const EMPTY_FORM = { task:"", assignee:"", type:"human", due:"", status:"To Do",
                          priority:"med", notes:"", section:"Planning" };
@@ -123,6 +134,10 @@
       const [noteDraft,         setNoteDraft]         = useState("");
       const [editingAssigneeId, setEditingAssigneeId] = useState(null);
       const [assigneeDraft,     setAssigneeDraft]     = useState({ assignee:"", type:"human" });
+      const [editingTaskId,     setEditingTaskId]     = useState(null);
+      const [taskDraft,         setTaskDraft]         = useState("");
+      const [sortField,         setSortField]         = useState(null);   // "due" | "priority" | null
+      const [sortDir,           setSortDir]           = useState("asc");  // "asc" | "desc"
 
       // ── Load ──
       const loadTasks = useCallback(async (silent=false) => {
@@ -180,6 +195,27 @@
           () => sheetUpdate(id, "due", dueDraft),
           () => setTasks(p => p.map(x => x.id===id ? {...x, due:old} : x))
         );
+      }
+
+      // ── Task description edit ──
+      function startEditTask(t) { setEditingTaskId(t.id); setTaskDraft(t.task); }
+      function saveTask(id) {
+        const old = tasks.find(x => x.id===id)?.task ?? "";
+        withSync(
+          () => { setTasks(p => p.map(x => x.id===id ? {...x, task:taskDraft} : x)); setEditingTaskId(null); },
+          () => sheetUpdate(id, "task", taskDraft),
+          () => setTasks(p => p.map(x => x.id===id ? {...x, task:old} : x))
+        );
+      }
+
+      // ── Sort toggle ──
+      function toggleSort(field) {
+        if (sortField === field) {
+          setSortDir(d => d==="asc" ? "desc" : "asc");
+        } else {
+          setSortField(field);
+          setSortDir("asc");
+        }
       }
 
       // ── Assignee edit (two fields → two sequential writes) ──
@@ -240,8 +276,15 @@
       const filtered = useMemo(() => {
         let list = activeSection==="All" ? tasks : tasks.filter(t => t.section===activeSection);
         if (ownerFilter!=="All") list = list.filter(t => t.assignee.includes(ownerFilter));
+        if (sortField) {
+          list = [...list].sort((a, b) => {
+            const va = sortField==="due" ? parseDue(a.due) : (PRIORITY_ORDER[a.priority] ?? 99);
+            const vb = sortField==="due" ? parseDue(b.due) : (PRIORITY_ORDER[b.priority] ?? 99);
+            return sortDir==="asc" ? va - vb : vb - va;
+          });
+        }
         return list;
-      }, [tasks, activeSection, ownerFilter]);
+      }, [tasks, activeSection, ownerFilter, sortField, sortDir]);
 
       const stats = useMemo(() => ({
         total: tasks.length,
@@ -366,9 +409,19 @@
                       <tr className="border-b border-gray-100 bg-gray-50">
                         <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-4/12">Task</th>
                         <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-2/12">Assigned to</th>
-                        <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-1/12">Due</th>
+                        <th className="text-left px-4 py-2.5 text-xs w-1/12">
+                          <button onClick={() => toggleSort("due")}
+                            className={`flex items-center gap-1 font-medium hover:text-gray-800 transition-colors ${sortField==="due" ? "text-gray-900" : "text-gray-500"}`}>
+                            Due {sortField==="due" ? (sortDir==="asc" ? "↑" : "↓") : <span className="text-gray-300">↕</span>}
+                          </button>
+                        </th>
                         <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-1/12">Status</th>
-                        <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-1/12">Priority</th>
+                        <th className="text-left px-4 py-2.5 text-xs w-1/12">
+                          <button onClick={() => toggleSort("priority")}
+                            className={`flex items-center gap-1 font-medium hover:text-gray-800 transition-colors ${sortField==="priority" ? "text-gray-900" : "text-gray-500"}`}>
+                            Priority {sortField==="priority" ? (sortDir==="asc" ? "↑" : "↓") : <span className="text-gray-300">↕</span>}
+                          </button>
+                        </th>
                         <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-3/12">Notes</th>
                       </tr>
                     </thead>
@@ -377,9 +430,24 @@
                         <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400 text-xs">No tasks for this filter.</td></tr>
                       )}
                       {filtered.map((t,i) => (
-                        <tr key={t.id} className={`group border-b border-gray-50 hover:bg-blue-50/30 transition-colors ${i%2===1?"bg-gray-50/40":""}`}>
+                        <tr key={t.id} className={`group border-b border-gray-50 hover:bg-blue-50 transition-colors ${i%2===1?"bg-gray-50":""}`}>
 
-                          <td className="px-4 py-2.5 text-gray-800 leading-snug">{t.task}</td>
+                          <td className="px-4 py-2.5 text-gray-800 leading-snug">
+                            {editingTaskId===t.id ? (
+                              <input autoFocus
+                                className="w-full border border-blue-400 rounded px-2 py-1 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                                value={taskDraft}
+                                onChange={e => setTaskDraft(e.target.value)}
+                                onBlur={() => saveTask(t.id)}
+                                onKeyDown={e => { if(e.key==="Enter") saveTask(t.id); if(e.key==="Escape") setEditingTaskId(null); }}
+                              />
+                            ) : (
+                              <span onClick={() => startEditTask(t)} title="Click to edit task description"
+                                className="cursor-text hover:bg-yellow-50 rounded px-1 -mx-1 transition-colors block leading-snug">
+                                {t.task}
+                              </span>
+                            )}
+                          </td>
 
                           <td className="px-4 py-2.5">
                             {editingAssigneeId===t.id ? (
@@ -466,7 +534,7 @@
 
                   {/* Add task form */}
                   {showAddForm && (
-                    <form onSubmit={handleAdd} className="border-t border-gray-200 bg-blue-50/40 px-4 py-4">
+                    <form onSubmit={handleAdd} className="border-t border-gray-200 bg-blue-50 px-4 py-4">
                       <p className="text-xs font-semibold text-gray-700 mb-3">New Task</p>
                       <div className="grid grid-cols-6 gap-2 mb-2">
                         <input className="col-span-2 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -513,7 +581,7 @@
                   )}
 
                   {/* Footer */}
-                  <div className="px-4 py-3 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                  <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
                     <button onClick={() => setShowAddForm(v => !v)}
                       className="text-xs text-gray-600 font-medium hover:text-gray-900 flex items-center gap-1">
                       <span className="text-base leading-none">+</span> Add task
@@ -523,7 +591,7 @@
                       <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>Human</span>
                       <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-400 inline-block"></span>Mixed</span>
                       <span className="text-gray-300">·</span>
-                      <span className="italic">Click status to cycle · Click assignee, due date, or note to edit · Hover row to delete</span>
+                      <span className="italic">Click task, assignee, due date, or note to edit · Click status to cycle · Click Due/Priority header to sort · Hover row to delete</span>
                     </div>
                   </div>
                 </div>
