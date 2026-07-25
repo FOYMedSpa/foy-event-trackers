@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FOY Baby Shower — Baby Noah — Event Dashboard</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" />
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { display:inline-block; animation: spin 1s linear infinite; }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useCallback } = React;
+
+    // ── Apps Script endpoint ──────────────────────────────────────────────────
+    // Replace {{SHEET_URL}} with the deployed Apps Script Web App URL for THIS event.
+    // Each event has its OWN Google Sheet + Apps Script URL — never reuse another event's.
+    // GET  : returns { status:"ok", data:[{id,section,task,assignee,type,due,status,priority,notes},…] }
+    // POST : { action:"update", id, field:"fieldName", value:"newValue" }
+    //        { action:"add",    task:{…} }  |  { action:"delete", id }
+    // ─────────────────────────────────────────────────────────────────────────
+    const SHEET_URL = "https://script.google.com/macros/s/AKfycbxFAfKVdgxSBuTcTHmfG2IBavhma1y2ePlse2tOdAIouAa29Pj2vqi28Qhi0uCD3jI/exec";
+
+    async function sheetGet() {
+      const res = await fetch(SHEET_URL, { credentials: "omit" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      const rows = json.data ?? json.tasks ?? (Array.isArray(json) ? json : []);
+      return rows;
+    }
+
+    async function sheetPost(payload) {
+      await fetch(SHEET_URL, { method:"POST", mode:"no-cors", body: JSON.stringify(payload) });
+    }
+
+    async function sheetUpdate(id, field, value) {
+      return sheetPost({ action:"update", id, field, value });
+    }
+
+    function formatDue(val) {
+      if (!val) return "";
+      const s = String(val).trim();
+      if (!/^\d{4}/.test(s) && !/^\d{2}\//.test(s)) return s;
+      try {
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return s;
+        return d.toLocaleDateString("en-US", { month:"short", day:"numeric", timeZone:"UTC" });
+      } catch { return s; }
+    }
+
+    function normalizeRow(r) {
+      return {
+        id:       Number(r.id)      || 0,
+        section:  r.section         || "",
+        task:     r.task            || "",
+        assignee: r.assignee        || "",
+        type:     (r.type || "human").toLowerCase().trim(),
+        due:      formatDue(r.due),
+        status:   r.status          || "To Do",
+        priority: (r.priority || "med").toLowerCase().trim(),
+        notes:    r.notes           || "",
+      };
+    }
+
+    // ── Sections — Baby Shower / Private Celebration ─────────────────────────
+    const SECTIONS = ["All","Planning","Venue & Logistics","Guest Experience","Food & Drinks",
+                      "Décor & Signage","Games & Activities","Gifts & Favors","Photography",
+                      "Helper Briefing","Event Day","Post-Event"];
+
+    // ── Sort helpers ──────────────────────────────────────────────────────────
+    const MONTH_NUM = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+    const PRIORITY_ORDER = { high:0, med:1, low:2 };
+    const STATUS_ORDER   = { "blocked":0, "in progress":1, "to do":2, "done":3 };
+    function parseDue(s) {
+      if (!s) return Infinity;
+      const [mon, day] = s.trim().split(" ");
+      const m = MONTH_NUM[mon];
+      const d = parseInt(day);
+      return (m !== undefined && !isNaN(d)) ? new Date(2026, m, d).getTime() : Infinity;
+    }
+    const STATUS_CYCLE = ["To Do","In Progress","Done","Blocked"];
+    const EMPTY_FORM = { task:"", assignee:"", type:"human", due:"", status:"To Do",
+                         priority:"med", notes:"", section:"Planning" };
+    const STATUS_STYLE = {
+      "To Do":       "bg-gray-100 text-gray-600",
+      "In Progress": "bg-amber-100 text-amber-700",
+      "Done":        "bg-green-100 text-green-700",
+      "Blocked":     "bg-red-100 text-red-700",
+    };
+    const PRIORITY_STYLE = {
+      high: "bg-red-100 text-red-600",
+      med:  "bg-yellow-100 text-yellow-700",
+      low:  "bg-blue-100 text-blue-600",
+    };
+    const TYPE_STYLE = {
+      ai:    "bg-green-100 text-green-700 border border-green-200",
+      human: "bg-blue-100 text-blue-700 border border-blue-200",
+      mixed: "bg-purple-100 text-purple-700 border border-purple-200",
+    };
+
+    // ── Component ─────────────────────────────────────────────────────────────
+    function EventTracker() {
+      const [tasks,    setTasks]   = useState([]);
+      const [loading,  setLoading] = useState(true);
+      const [error,    setError]   = useState(null);
+      const [saving,   setSaving]  = useState(false);
+      const [lastSync, setSync]    = useState(null);
+
+      const [activeSection,     setActiveSection]     = useState("All");
+      const [showAddForm,       setShowAddForm]       = useState(false);
+      const [form,              setForm]              = useState(EMPTY_FORM);
+      const [ownerFilter,       setOwnerFilter]       = useState("All");
+      const [editingNoteId,     setEditingNoteId]     = useState(null);
+      const [noteDraft,         setNoteDraft]         = useState("");
+      const [editingAssigneeId, setEditingAssigneeId] = useState(null);
+      const [assigneeDraft,     setAssigneeDraft]     = useState({ assignee:"", type:"human" });
+      const [editingTaskId,     setEditingTaskId]     = useState(null);
+      const [taskDraft,         setTaskDraft]         = useState("");
+      const [sortField,         setSortField]         = useState(null);
+      const [sortDir,           setSortDir]           = useState("asc");
+      const [editingDueId,      setEditingDueId]      = useState(null);
+      const [dueDraft,          setDueDraft]          = useState("");
+
+      const loadTasks = useCallback(async (silent=false) => {
+        if (!silent) setLoading(true);
+        setError(null);
+        try {
+          const rows = await sheetGet();
+          setTasks(rows.map(normalizeRow));
+          setSync(new Date());
+        } catch(e) { setError(e.message); }
+        finally { setLoading(false); }
+      }, []);
+
+      useEffect(() => { loadTasks(); }, [loadTasks]);
+
+      async function withSync(optimisticFn, writeFn, rollbackFn) {
+        optimisticFn();
+        setSaving(true); setError(null);
+        try { await writeFn(); setSync(new Date()); }
+        catch(e) { rollbackFn(); setError("Save failed — " + e.message); }
+        finally { setSaving(false); }
+      }
+
+      function cycleStatus(id) {
+        const t = tasks.find(x => x.id===id);
+        const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(t.status)+1) % STATUS_CYCLE.length];
+        withSync(
+          () => setTasks(p => p.map(x => x.id===id ? {...x, status:next} : x)),
+          () => sheetUpdate(id, "status", next),
+          () => setTasks(p => p.map(x => x.id===id ? {...x, status:t.status} : x))
+        );
+      }
+
+      function startEditNote(t) { setEditingNoteId(t.id); setNoteDraft(t.notes); }
+      function saveNote(id) {
+        const old = tasks.find(x => x.id===id)?.notes ?? "";
+        withSync(
+          () => { setTasks(p => p.map(x => x.id===id ? {...x, notes:noteDraft} : x)); setEditingNoteId(null); },
+          () => sheetUpdate(id, "notes", noteDraft),
+          () => setTasks(p => p.map(x => x.id===id ? {...x, notes:old} : x))
+        );
+      }
+
+      function startEditDue(t) { setEditingDueId(t.id); setDueDraft(t.due); }
+      function saveDue(id) {
+        const old = tasks.find(x => x.id===id)?.due ?? "";
+        withSync(
+          () => { setTasks(p => p.map(x => x.id===id ? {...x, due:dueDraft} : x)); setEditingDueId(null); },
+          () => sheetUpdate(id, "due", dueDraft),
+          () => setTasks(p => p.map(x => x.id===id ? {...x, due:old} : x))
+        );
+      }
+
+      function startEditTask(t) { setEditingTaskId(t.id); setTaskDraft(t.task); }
+      function saveTask(id) {
+        const old = tasks.find(x => x.id===id)?.task ?? "";
+        withSync(
+          () => { setTasks(p => p.map(x => x.id===id ? {...x, task:taskDraft} : x)); setEditingTaskId(null); },
+          () => sheetUpdate(id, "task", taskDraft),
+          () => setTasks(p => p.map(x => x.id===id ? {...x, task:old} : x))
+        );
+      }
+
+      function toggleSort(field) {
+        if (sortField===field) { setSortDir(d => d==="asc" ? "desc" : "asc"); }
+        else { setSortField(field); setSortDir("asc"); }
+      }
+
+      function startEditAssignee(t) {
+        setEditingAssigneeId(t.id);
+        setAssigneeDraft({ assignee:t.assignee, type:t.type });
+      }
+      async function saveAssignee(id) {
+        const old = tasks.find(x => x.id===id);
+        setTasks(p => p.map(x => x.id===id ? {...x, assignee:assigneeDraft.assignee, type:assigneeDraft.type} : x));
+        setEditingAssigneeId(null);
+        setSaving(true); setError(null);
+        try {
+          await sheetUpdate(id, "assignee", assigneeDraft.assignee);
+          await sheetUpdate(id, "type", assigneeDraft.type);
+          setSync(new Date());
+        } catch(e) {
+          setTasks(p => p.map(x => x.id===id ? {...x, assignee:old.assignee, type:old.type} : x));
+          setError("Save failed — " + e.message);
+        } finally { setSaving(false); }
+      }
+
+      function deleteTask(id) {
+        const snap = [...tasks];
+        withSync(
+          () => setTasks(p => p.filter(x => x.id!==id)),
+          () => sheetPost({ action:"delete", id }),
+          () => setTasks(snap)
+        );
+      }
+
+      function handleAdd(e) {
+        e.preventDefault();
+        if (!form.task.trim()) return;
+        const newId = Math.max(0, ...tasks.map(t => t.id)) + 1;
+        const newTask = { id:newId, ...form };
+        setTasks(p => [...p, newTask]);
+        setShowAddForm(false); setForm(EMPTY_FORM);
+        setSaving(true); setError(null);
+        sheetPost({ action:"add", task:newTask })
+          .then(() => { setTimeout(() => loadTasks(true), 1500); setSync(new Date()); })
+          .catch(e => { setTasks(p => p.filter(x => x.id!==newId)); setError("Add failed — "+e.message); })
+          .finally(() => setSaving(false));
+      }
+
+      const ownerList = useMemo(() => {
+        const s = new Set();
+        tasks.forEach(t => t.assignee.split(/[,/+]/).forEach(n => s.add(n.trim())));
+        return ["All", ...Array.from(s).sort()];
+      }, [tasks]);
+
+      const filtered = useMemo(() => {
+        let list = activeSection==="All" ? tasks : tasks.filter(t => t.section===activeSection);
+        if (ownerFilter!=="All") list = list.filter(t => t.assignee.includes(ownerFilter));
+        if (sortField) {
+          list = [...list].sort((a, b) => {
+            const va = sortField==="due"      ? parseDue(a.due)
+                     : sortField==="priority" ? (PRIORITY_ORDER[a.priority] ?? 99)
+                     : (STATUS_ORDER[(a.status||"").toLowerCase()] ?? 99);
+            const vb = sortField==="due"      ? parseDue(b.due)
+                     : sortField==="priority" ? (PRIORITY_ORDER[b.priority] ?? 99)
+                     : (STATUS_ORDER[(b.status||"").toLowerCase()] ?? 99);
+            return sortDir==="asc" ? va - vb : vb - va;
+          });
+        }
+        return list;
+      }, [tasks, activeSection, ownerFilter, sortField, sortDir]);
+
+      const stats = useMemo(() => ({
+        total: tasks.length,
+        done:  tasks.filter(t => t.status==="Done").length,
+        human: tasks.filter(t => t.type==="human").length,
+        ai:    tasks.filter(t => t.type==="ai").length,
+        mixed: tasks.filter(t => t.type==="mixed").length,
+      }), [tasks]);
+
+      const pct = stats.total > 0 ? Math.round(stats.done / stats.total * 100) : 0;
+      const syncLabel = saving   ? "Saving…"
+        : error    ? "⚠ Sync error"
+        : lastSync ? `Synced ${lastSync.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`
+        : "";
+
+      return (
+        <div className="min-h-screen bg-gray-50 text-sm font-sans">
+
+          {/* Header — Emerald (distinct from Summer Solstice gradient & Bridal indigo) */}
+          <div className="bg-emerald-700 border-b border-emerald-800 px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-emerald-700 font-bold text-sm flex-shrink-0">EV</div>
+                <div>
+                  <h1 className="text-xl font-semibold text-white">FOY Baby Shower — Celebrating Baby Noah 🚢🌈</h1>
+                  <p className="text-emerald-200 text-xs mt-0.5">Managed by Eva · For Mike &amp; Dr. Gena · Sunday, September 13, 2026 · Noah&#39;s Ark theme</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                  saving    ? "bg-amber-100 text-amber-700"
+                  : error   ? "bg-red-100 text-red-600"
+                  : lastSync ? "bg-green-100 text-green-700"
+                  : "bg-emerald-100 text-emerald-500"
+                }`}>
+                  {saving && <span className="spin mr-1">⟳</span>}
+                  {syncLabel}
+                </span>
+                <button onClick={() => loadTasks()} disabled={loading||saving}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-emerald-400 bg-emerald-600 text-white hover:bg-emerald-500 transition-colors disabled:opacity-40">
+                  ↻ Refresh
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-6 py-5 max-w-screen-xl mx-auto">
+
+            {loading && (
+              <div className="flex items-center justify-center py-20 text-gray-400 gap-2">
+                <span className="spin text-lg">⟳</span> Loading tasks from Google Sheet…
+              </div>
+            )}
+
+            {error && !loading && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl px-4 py-3 mb-4 flex justify-between items-center">
+                <span><strong>Error:</strong> {error} &nbsp;— check that the Apps Script URL is set and deployed.</span>
+                <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 ml-4 font-bold">✕</button>
+              </div>
+            )}
+
+            {!loading && tasks.length > 0 && (
+              <>
+                {/* Stats */}
+                <div className="grid grid-cols-5 gap-3 mb-4">
+                  {[
+                    {label:"Total tasks", val:stats.total, color:"text-gray-900"},
+                    {label:"Completed",   val:stats.done,  color:"text-green-700"},
+                    {label:"Human tasks", val:stats.human, color:"text-blue-700"},
+                    {label:"AI tasks",    val:stats.ai,    color:"text-green-700"},
+                    {label:"Mixed tasks", val:stats.mixed, color:"text-purple-700"},
+                  ].map(s => (
+                    <div key={s.label} className="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
+                      <div className={`text-3xl font-semibold ${s.color}`}>{s.val}</div>
+                      <div className="text-gray-500 text-xs mt-1">{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Progress */}
+                <div className="h-2 bg-gray-200 rounded-full overflow-hidden mb-1">
+                  <div className="h-full bg-emerald-500 rounded-full transition-all duration-300" style={{width:`${pct}%`}} />
+                </div>
+                <p className="text-xs text-gray-500 mb-4">
+                  {stats.done} of {stats.total} tasks complete — {pct}%
+                  &nbsp;·&nbsp;{stats.human} human · {stats.ai} AI · {stats.mixed} mixed
+                  &nbsp;·&nbsp;<span className="text-emerald-600 font-medium">Live: Google Sheet</span>
+                </p>
+
+                {/* Owner filter */}
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xs text-gray-500 font-medium whitespace-nowrap">Filter by owner:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {ownerList.map(o => (
+                      <button key={o} onClick={() => setOwnerFilter(o)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                          ownerFilter===o
+                            ? "bg-emerald-700 text-white border-emerald-700"
+                            : "bg-white text-gray-600 border-gray-200 hover:border-emerald-400"
+                        }`}>{o}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Section tabs */}
+                <div className="flex flex-wrap border-b border-gray-200 mb-4">
+                  {SECTIONS.map(s => (
+                    <button key={s} onClick={() => setActiveSection(s)}
+                      className={`px-3 py-2 text-xs font-medium border-b-2 whitespace-nowrap -mb-px transition-colors ${
+                        activeSection===s
+                          ? "border-emerald-700 text-emerald-700"
+                          : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                      }`}>{s}</button>
+                  ))}
+                </div>
+
+                {/* Table */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-gray-50">
+                        <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-4/12">Task</th>
+                        <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-2/12">Assigned to</th>
+                        <th className="text-left px-4 py-2.5 text-xs w-1/12">
+                          <button onClick={() => toggleSort("due")}
+                            className={`flex items-center gap-1 font-medium hover:text-gray-800 transition-colors ${sortField==="due" ? "text-gray-900" : "text-gray-500"}`}>
+                            Due {sortField==="due" ? (sortDir==="asc" ? "↑" : "↓") : <span className="text-gray-300">↕</span>}
+                          </button>
+                        </th>
+                        <th className="text-left px-4 py-2.5 text-xs w-1/12">
+                          <button onClick={() => toggleSort("status")}
+                            className={`flex items-center gap-1 font-medium hover:text-gray-800 transition-colors ${sortField==="status" ? "text-gray-900" : "text-gray-500"}`}>
+                            Status {sortField==="status" ? (sortDir==="asc" ? "↑" : "↓") : <span className="text-gray-300">↕</span>}
+                          </button>
+                        </th>
+                        <th className="text-left px-4 py-2.5 text-xs w-1/12">
+                          <button onClick={() => toggleSort("priority")}
+                            className={`flex items-center gap-1 font-medium hover:text-gray-800 transition-colors ${sortField==="priority" ? "text-gray-900" : "text-gray-500"}`}>
+                            Priority {sortField==="priority" ? (sortDir==="asc" ? "↑" : "↓") : <span className="text-gray-300">↕</span>}
+                          </button>
+                        </th>
+                        <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 w-3/12">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.length===0 && (
+                        <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400 text-xs">No tasks for this filter.</td></tr>
+                      )}
+                      {filtered.map((t,i) => (
+                        <tr key={t.id} className={`group border-b border-gray-50 hover:bg-emerald-50 transition-colors ${i%2===1?"bg-gray-50":""}`}>
+
+                          <td className="px-4 py-2.5 text-gray-800 leading-snug">
+                            {editingTaskId===t.id ? (
+                              <input autoFocus
+                                className="w-full border border-emerald-400 rounded px-2 py-1 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                                value={taskDraft}
+                                onChange={e => setTaskDraft(e.target.value)}
+                                onBlur={() => saveTask(t.id)}
+                                onKeyDown={e => { if(e.key==="Enter") saveTask(t.id); if(e.key==="Escape") setEditingTaskId(null); }}
+                              />
+                            ) : (
+                              <span onClick={() => startEditTask(t)} title="Click to edit task description"
+                                className="cursor-text hover:bg-yellow-50 rounded px-1 -mx-1 transition-colors block leading-snug">
+                                {t.task}
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-2.5">
+                            {editingAssigneeId===t.id ? (
+                              <div className="flex flex-col gap-1">
+                                <input autoFocus
+                                  className="w-full border border-emerald-400 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                                  value={assigneeDraft.assignee}
+                                  onChange={e => setAssigneeDraft(d => ({...d, assignee:e.target.value}))}
+                                  onKeyDown={e => { if(e.key==="Enter") saveAssignee(t.id); if(e.key==="Escape") setEditingAssigneeId(null); }}
+                                />
+                                <select className="border border-gray-300 rounded px-1 py-0.5 text-xs"
+                                  value={assigneeDraft.type}
+                                  onChange={e => setAssigneeDraft(d => ({...d, type:e.target.value}))}
+                                  onBlur={() => saveAssignee(t.id)}>
+                                  <option value="human">Human</option>
+                                  <option value="ai">AI</option>
+                                  <option value="mixed">Mixed</option>
+                                </select>
+                              </div>
+                            ) : (
+                              <span onClick={() => startEditAssignee(t)} title="Click to edit"
+                                className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer hover:opacity-75 ${TYPE_STYLE[t.type]||TYPE_STYLE.human}`}>
+                                {t.assignee}
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">
+                            {editingDueId===t.id ? (
+                              <input autoFocus
+                                className="w-24 border border-emerald-400 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                                value={dueDraft}
+                                onChange={e => setDueDraft(e.target.value)}
+                                onBlur={() => saveDue(t.id)}
+                                onKeyDown={e => { if(e.key==="Enter") saveDue(t.id); if(e.key==="Escape") setEditingDueId(null); }}
+                              />
+                            ) : (
+                              <span onClick={() => startEditDue(t)} title="Click to edit due date"
+                                className="cursor-text hover:bg-yellow-50 rounded px-1 -mx-1 transition-colors">
+                                {t.due || <span className="text-gray-300 italic">set date</span>}
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-2.5">
+                            <button onClick={() => cycleStatus(t.id)} title="Click to cycle status"
+                              className={`px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer hover:opacity-75 ${STATUS_STYLE[t.status]||STATUS_STYLE["To Do"]}`}>
+                              {t.status}
+                            </button>
+                          </td>
+
+                          <td className="px-4 py-2.5">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${PRIORITY_STYLE[t.priority]||PRIORITY_STYLE.med}`}>
+                              {t.priority}
+                            </span>
+                          </td>
+
+                          <td className="px-4 py-2.5 text-xs leading-snug">
+                            <div className="flex items-start gap-2">
+                              <div className="flex-1">
+                                {editingNoteId===t.id ? (
+                                  <input autoFocus
+                                    className="w-full border border-emerald-400 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                                    value={noteDraft}
+                                    onChange={e => setNoteDraft(e.target.value)}
+                                    onBlur={() => saveNote(t.id)}
+                                    onKeyDown={e => { if(e.key==="Enter") saveNote(t.id); if(e.key==="Escape") setEditingNoteId(null); }}
+                                  />
+                                ) : (
+                                  <span onClick={() => startEditNote(t)} title="Click to edit note"
+                                    className="cursor-text text-gray-500 hover:text-gray-800 hover:bg-yellow-50 rounded px-1 -mx-1 transition-colors block min-h-4">
+                                    {t.notes || <span className="text-gray-300 italic">click to add note</span>}
+                                  </span>
+                                )}
+                              </div>
+                              <button onClick={() => deleteTask(t.id)} title="Delete task"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 text-base leading-none flex-shrink-0 mt-0.5">×</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Add task form */}
+                  {showAddForm && (
+                    <form onSubmit={handleAdd} className="border-t border-gray-200 bg-emerald-50 px-4 py-4">
+                      <p className="text-xs font-semibold text-gray-700 mb-3">New Task</p>
+                      <div className="grid grid-cols-6 gap-2 mb-2">
+                        <input className="col-span-2 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          placeholder="Task description *" value={form.task} required
+                          onChange={e => setForm(f => ({...f, task:e.target.value}))} />
+                        <input className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          placeholder="Assigned to" value={form.assignee}
+                          onChange={e => setForm(f => ({...f, assignee:e.target.value}))} />
+                        <input className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          placeholder="Due (e.g. Aug 9)" value={form.due}
+                          onChange={e => setForm(f => ({...f, due:e.target.value}))} />
+                        <select className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          value={form.section} onChange={e => setForm(f => ({...f, section:e.target.value}))}>
+                          {SECTIONS.filter(s => s!=="All").map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <select className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          value={form.priority} onChange={e => setForm(f => ({...f, priority:e.target.value}))}>
+                          <option value="high">High priority</option>
+                          <option value="med">Med priority</option>
+                          <option value="low">Low priority</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-6 gap-2 items-center">
+                        <input className="col-span-2 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          placeholder="Notes (optional)" value={form.notes}
+                          onChange={e => setForm(f => ({...f, notes:e.target.value}))} />
+                        <select className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          value={form.type} onChange={e => setForm(f => ({...f, type:e.target.value}))}>
+                          <option value="human">Human helper</option>
+                          <option value="ai">AI employee</option>
+                          <option value="mixed">Mixed</option>
+                        </select>
+                        <select className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          value={form.status} onChange={e => setForm(f => ({...f, status:e.target.value}))}>
+                          {STATUS_CYCLE.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <div className="col-span-2 flex gap-2">
+                          <button type="submit" className="bg-emerald-700 text-white px-4 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-600 transition-colors">Add task</button>
+                          <button type="button" onClick={() => { setShowAddForm(false); setForm(EMPTY_FORM); }}
+                            className="text-gray-500 px-3 py-1.5 rounded-lg text-xs hover:bg-gray-100 transition-colors">Cancel</button>
+                        </div>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* Footer */}
+                  <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
+                    <button onClick={() => setShowAddForm(v => !v)}
+                      className="text-xs text-gray-600 font-medium hover:text-gray-900 flex items-center gap-1">
+                      <span className="text-base leading-none">+</span> Add task
+                    </button>
+                    <div className="flex gap-3 text-xs text-gray-400">
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block"></span>AI</span>
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>Human</span>
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-400 inline-block"></span>Mixed</span>
+                      <span className="text-gray-300">·</span>
+                      <span className="italic">Click task, assignee, due date, or note to edit · Click status to cycle · Click Due/Priority/Status header to sort · Hover row to delete</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<EventTracker />);
+  </script>
+</body>
+</html>
